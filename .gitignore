@@ -13,3 +13,4 @@
 /target
 /dev_docs
 /.cursor
+.env
