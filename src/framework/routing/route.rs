@@ -2,6 +2,8 @@ use axum::Router;
 use axum::handler::Handler;
 use axum::routing::{delete, get, patch, post, put};
 
+use crate::framework::http::middleware::{Middleware, apply_layer, apply_route_layer};
+
 pub struct Route {
     router: Router,
 }
@@ -55,6 +57,20 @@ impl Route {
         T: 'static,
     {
         self.router = self.router.route(path, delete(handler));
+        self
+    }
+
+    /// Applies middleware to every route on this builder (including routes added later).
+    pub fn middleware<M: Middleware>(mut self, middleware: M) -> Self {
+        self.router = apply_layer(self.router, middleware);
+        self
+    }
+
+    /// Applies middleware only to routes registered **before** this call.
+    ///
+    /// The underlying Axum router must already contain at least one route, otherwise this panics.
+    pub fn route_middleware<M: Middleware>(mut self, middleware: M) -> Self {
+        self.router = apply_route_layer(self.router, middleware);
         self
     }
 

@@ -8,6 +8,8 @@ license = "MIT"
 axum = "0.8"
 dotenvy = "0.15.7"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serde_urlencoded = "0.7"
 thiserror = "2.0.18"
 tokio = { version = "1.52.2", features = ["full"] }
 toml = "1.1.2"
@@ -15,6 +17,7 @@ toml = "1.1.2"
 [dev-dependencies]
 serde_json = "1.0.149"
 tempfile = "3.27.0"
+tower = { version = "0.5", features = ["util"] }
 
 [[test]]
 name = "feature"

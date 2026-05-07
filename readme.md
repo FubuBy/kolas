@@ -13,8 +13,9 @@ Bootstrap iteration. Currently included:
 - Controllers as Rust structs with associated `async fn` handlers.
 - A working sample endpoint: `GET /hello` returning `{"payload": "Hello world"}`.
 - File-based configuration with environment-variable overrides (`config/*.toml` + `.env`).
+- HTTP middleware: `framework::http::middleware::Middleware` with `Route::middleware` (global layer) and `Route::route_middleware` (existing routes only), plus sample `TrimStrings` (JSON, form-urlencoded, and query trimming).
 
-Out of scope for now (planned): middleware, global error handler, resource routes, CLI commands, database layer.
+Out of scope for now (planned): global error handler, resource routes, CLI commands, database layer.
 
 ## Requirements
 
@@ -48,14 +49,18 @@ src/
 │   ├── config/                                   # Configuration loader (TOML + env overrides)
 │   │   ├── config.rs                             # Config struct + static facade
 │   │   └── error.rs                              # Typed loader errors
+│   ├── http/
+│   │   └── middleware/                           # Middleware trait + Axum adapters
 │   └── routing/
 │       └── route.rs                              # Route builder facade over axum::Router
 ├── routes/
 │   └── api.rs                                    # API route table — register your routes here
 └── app/
     └── http/
-        └── controllers/
-            └── hello_world_controller.rs         # Your controllers go in this directory
+        ├── controllers/
+        │   └── hello_world_controller.rs         # Your controllers go in this directory
+        └── middleware/
+            └── trim_strings.rs                   # Example TrimStrings middleware
 
 config/                                           # Application configuration (TOML files)
 ├── app.toml
@@ -70,11 +75,13 @@ tests/
 ├── feature/                                      # Component / integration tests (HTTP, controllers, end-to-end)
 │   ├── mod.rs                                    # entry: declares submodule tests
 │   ├── config_loads_from_directory.rs
-│   └── hello_world_controller.rs
+│   ├── hello_world_controller.rs
+│   └── trim_strings.rs
 └── unit/                                         # Focused unit tests of small components
     ├── mod.rs                                    # entry: declares submodule tests
     ├── config.rs
-    └── hello_payload.rs
+    ├── hello_payload.rs
+    └── trim_strings.rs
 ```
 
 ---
@@ -407,14 +414,85 @@ Both forms are equivalent; the environment variable wins if both are set. See [s
 
 ## 5. Add a new module to the framework core
 
-If you want to extend the framework itself (e.g. add middleware, a request-validation layer, an exception handler), create the new sub-module under `src/framework/` and declare it in `src/framework/mod.rs`:
-
-```rust
-pub mod routing;
-pub mod middleware;   // <-- new core module
-```
+If you want to extend the framework itself (e.g. add a request-validation layer, an exception handler), create the new sub-module under `src/framework/` and declare it in `src/framework/mod.rs`. HTTP middleware primitives already live under `src/framework/http/middleware/`.
 
 Treat `src/framework/` as future standalone-crate code: avoid depending on anything in `src/app/`, `src/routes/`, or `src/bootstrap/` from inside `framework/`. The dependency direction is one-way — application code depends on the framework, never the reverse.
+
+## 6. Add HTTP middleware
+
+Middleware runs **before** your handler. The framework exposes a small trait in `kolas::framework::http::middleware::Middleware` and wires it through Axum's `middleware::from_fn`.
+
+### 6.1. Implement middleware (struct)
+
+Create `src/app/http/middleware/<name>.rs` (or extend `trim_strings.rs` as a template). A typical middleware is a unit struct with an `async fn handle(&self, request, next) -> Response`:
+
+```rust
+use axum::extract::Request;
+use axum::middleware::Next;
+use axum::response::Response;
+use kolas::framework::http::middleware::Middleware;
+
+#[derive(Clone, Default)]
+pub struct MyMiddleware;
+
+impl Middleware for MyMiddleware {
+    async fn handle(&self, request: Request, next: Next) -> Response {
+        // Inspect or mutate `request` here if needed.
+        next.run(request).await
+    }
+}
+```
+
+Expose it from `src/app/http/middleware/mod.rs` with `pub mod my_middleware;` and `pub use my_middleware::MyMiddleware;`.
+
+### 6.2. Async function middleware (blanket impl)
+
+Function items such as `async fn(req: Request, next: Next) -> Response` also implement `Middleware`, so you can pass them directly to the route builder:
+
+```rust
+async fn noop(req: Request, next: Next) -> Response {
+    next.run(req).await
+}
+
+// ...
+Route::new()
+    .get("/hello", HelloWorldController::index)
+    .middleware(noop)
+```
+
+Note: ordinary `|req, next| async move { ... }` closures are often `FnOnce` (they consume `Request`), so they do **not** always satisfy the blanket `Fn` bound. Prefer a named `async fn` or a unit struct.
+
+### 6.3. Register on the `Route` builder
+
+Open `src/routes/api.rs` and chain one of:
+
+| Method | Axum equivalent | Effect |
+|--------|-----------------|--------|
+| `.middleware(M)` | `Router::layer` | Applies to **all** routes on the builder, including routes you add **after** this call. |
+| `.route_middleware(M)` | `Router::route_layer` | Applies only to routes registered **before** this call. Routes added later will **not** get the layer. Requires at least one route already — otherwise Axum panics. |
+
+Example (global `TrimStrings`, shipped with the skeleton):
+
+```rust
+use kolas::app::http::middleware::TrimStrings;
+
+Route::new()
+    .get("/", HelloWorldController::index)
+    .middleware(TrimStrings)
+    .into_router()
+```
+
+### 6.4. What the sample `TrimStrings` middleware does
+
+| Source | When | Behaviour |
+|--------|------|-----------|
+| Query string | Any HTTP method | Trims decoded parameter values (via `serde_urlencoded`). On parse failure the query is left unchanged. |
+| JSON body | `POST` / `PUT` / `PATCH`, `Content-Type: application/json` | Recursively trims string values in `serde_json::Value`. Invalid JSON leaves the body untouched. |
+| Form body | Same methods, `application/x-www-form-urlencoded` | Trims each value. Invalid form bodies are left untouched. |
+| Keys `password`, `password_confirmation` | JSON, form, query | Values are **not** trimmed. |
+| Other bodies | e.g. `multipart/*`, `text/plain` | Body is not buffered or modified. |
+
+Internal design notes: `dev_docs/architecture/middleware.md`.
 
 ---
 

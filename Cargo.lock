@@ -306,10 +306,12 @@ dependencies = [
  "dotenvy",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "tempfile",
  "thiserror",
  "tokio",
  "toml",
+ "tower",
 ]
 
 [[package]]
