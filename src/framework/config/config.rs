@@ -112,9 +112,9 @@ impl Config {
     /// Returns the global instance. Panics if `install_global` has not been
     /// called yet.
     pub fn global() -> &'static Self {
-        GLOBAL.get().expect(
-            "Config is not initialized; call Config::load(...).install_global() at startup",
-        )
+        GLOBAL
+            .get()
+            .expect("Config is not initialized; call Config::load(...).install_global() at startup")
     }
 
     // === Instance API (used in tests and when injected manually) ===

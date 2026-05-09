@@ -1,6 +1,12 @@
+use std::convert::Infallible;
+
 use axum::Router;
+use axum::extract::Request;
 use axum::handler::Handler;
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, patch, post, put};
+use tower::Layer;
+use tower::Service;
 
 use crate::framework::http::middleware::{Middleware, apply_layer, apply_route_layer};
 
@@ -63,6 +69,22 @@ impl Route {
     /// Applies middleware to every route on this builder (including routes added later).
     pub fn middleware<M: Middleware>(mut self, middleware: M) -> Self {
         self.router = apply_layer(self.router, middleware);
+        self
+    }
+
+    /// Wraps the router with a Tower [`Layer`] (e.g. `tower-http`: compression, CORS, trace).
+    ///
+    /// Prefer this for third-party / infrastructure layers; use [`Route::middleware`] for
+    /// application [`Middleware`] types.
+    pub fn layer<L>(mut self, layer: L) -> Self
+    where
+        L: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
+        <L::Service as Service<Request>>::Response: IntoResponse + 'static,
+        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
+        <L::Service as Service<Request>>::Future: Send + 'static,
+    {
+        self.router = self.router.layer(layer);
         self
     }
 

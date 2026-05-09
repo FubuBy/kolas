@@ -13,7 +13,8 @@ Bootstrap iteration. Currently included:
 - Controllers as Rust structs with associated `async fn` handlers.
 - A working sample endpoint: `GET /hello` returning `{"payload": "Hello world"}`.
 - File-based configuration with environment-variable overrides (`config/*.toml` + `.env`).
-- HTTP middleware: `framework::http::middleware::Middleware` with `Route::middleware` (global layer) and `Route::route_middleware` (existing routes only), plus sample `TrimStrings` (JSON, form-urlencoded, and query trimming).
+- HTTP: `Route::middleware` / `Route::route_middleware` for the framework `Middleware` trait (application code, e.g. `TrimStrings`), and `Route::layer` for Tower / **tower-http** layers. Sample `TrimStrings` trims JSON, form-urlencoded, and query strings.
+- Default **tower-http** stack is chained on the same `Route` builder: **trace**, permissive **CORS**, **compression** (gzip / brotli / zstd / deflate). Subscriber: `bootstrap::telemetry::Telemetry::init()` from `bootstrap::app::run()`; tune with `RUST_LOG` (see `.env.example`).
 
 Out of scope for now (planned): global error handler, resource routes, CLI commands, database layer.
 
@@ -29,6 +30,9 @@ cargo run
 # Listening on http://127.0.0.1:3000
 curl http://127.0.0.1:3000/hello
 # {"payload":"Hello world"}
+
+# Optional: quieter logs (default subscriber uses RUST_LOG or info + tower_http=trace)
+RUST_LOG=warn cargo run
 ```
 
 Run tests:
@@ -44,7 +48,9 @@ src/
 ├── main.rs                                       # Tokio runtime entry point
 ├── lib.rs                                        # Library crate root: declares public modules
 ├── bootstrap/
-│   └── app.rs                                    # run(): loads config, binds listener, starts axum::serve
+│   ├── app.rs                                    # run(): telemetry, config install, HttpServer::run
+│   ├── server.rs                                 # HttpServer — bind + axum::serve from Config
+│   └── telemetry.rs                              # Telemetry::init() — tracing subscriber + RUST_LOG
 ├── framework/                                    # Framework core (future standalone crate)
 │   ├── config/                                   # Configuration loader (TOML + env overrides)
 │   │   ├── config.rs                             # Config struct + static facade
@@ -420,7 +426,7 @@ Treat `src/framework/` as future standalone-crate code: avoid depending on anyth
 
 ## 6. Add HTTP middleware
 
-Middleware runs **before** your handler. The framework exposes a small trait in `kolas::framework::http::middleware::Middleware` and wires it through Axum's `middleware::from_fn`.
+Middleware runs **before** your handler. Convention: **library / infrastructure** → `Route::layer(...)` (`tower-http`, other `Layer` types); **your policy** → `Route::middleware(...)` with the `Middleware` trait (Axum `middleware::from_fn` under the hood).
 
 ### 6.1. Implement middleware (struct)
 
@@ -464,21 +470,28 @@ Note: ordinary `|req, next| async move { ... }` closures are often `FnOnce` (the
 
 ### 6.3. Register on the `Route` builder
 
-Open `src/routes/api.rs` and chain one of:
+Open `src/routes/api.rs` and chain:
 
-| Method | Axum equivalent | Effect |
-|--------|-----------------|--------|
-| `.middleware(M)` | `Router::layer` | Applies to **all** routes on the builder, including routes you add **after** this call. |
-| `.route_middleware(M)` | `Router::route_layer` | Applies only to routes registered **before** this call. Routes added later will **not** get the layer. Requires at least one route already — otherwise Axum panics. |
+| Method | Typical use | Effect |
+|--------|-------------|--------|
+| `.layer(L)` | `CompressionLayer`, `CorsLayer`, `TraceLayer`, … | Same as `axum::Router::layer`: applies to the whole router built so far (and routes you add **after** this call). |
+| `.middleware(M)` | Types implementing `Middleware` | Same stack position as other global layers; use for app-specific `from_fn` middleware. |
+| `.route_middleware(M)` | Scoped auth, etc. | Same as `Router::route_layer`: only routes registered **before** this call. At least one route required or Axum panics. |
 
-Example (global `TrimStrings`, shipped with the skeleton):
+Example (matches the project skeleton — app middleware first, then tower-http; on the wire: trace → CORS → compression → `TrimStrings` → handlers):
 
 ```rust
 use kolas::app::http::middleware::TrimStrings;
+use tower_http::compression::CompressionLayer;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 
 Route::new()
     .get("/", HelloWorldController::index)
     .middleware(TrimStrings)
+    .layer(CompressionLayer::new())
+    .layer(CorsLayer::permissive())
+    .layer(TraceLayer::new_for_http())
     .into_router()
 ```
 
@@ -498,7 +511,7 @@ Internal design notes: `dev_docs/architecture/middleware.md`.
 
 # Routing under the hood
 
-`Route` is a thin builder over `axum::Router`. Calling `.get(path, handler)` internally invokes `axum::Router::route(path, axum::routing::get(handler))` and returns the builder for chaining. `.into_router()` unwraps the underlying `axum::Router`, which is then served by `axum::serve` in `bootstrap/app.rs`. No global state, no macros — just a typed builder. This means anything Axum supports (extractors, state, error responses) is available unchanged inside controller methods.
+`Route` is a thin builder over `axum::Router`. Verbs like `.get` delegate to `Router::route`. `.middleware` and `.layer` delegate to Axum’s `Router::layer`; `.route_middleware` maps to `Router::route_layer`. In `src/routes/api.rs`, **tower-http** layers are chained on the same `Route` builder as application middleware, then `.into_router()` produces the `Router` passed to `axum::serve` in `bootstrap/server.rs` (`HttpServer::run`). Anything Axum supports (extractors, state, error responses) remains available inside controller methods.
 
 # License
 
