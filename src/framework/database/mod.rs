@@ -20,4 +20,4 @@ pub use config::{
 pub use driver::{any_url, mysql_options, pg_options, sqlite_options};
 pub use error::DatabaseError;
 pub use manager::{Connection, Database};
-pub use migrate::{migrate, migrate_default, migrate_with};
+pub use migrate::{migrate, migrate_default, migrate_with, rollback, rollback_default};

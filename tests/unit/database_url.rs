@@ -16,7 +16,10 @@ fn postgres_url_includes_credentials_and_explicit_port() {
         password = "p"
         "#,
     );
-    assert_eq!(any_url("primary", &c).unwrap(), "postgres://u:p@db.example:5432/app");
+    assert_eq!(
+        any_url("primary", &c).unwrap(),
+        "postgres://u:p@db.example:5432/app"
+    );
 }
 
 #[test]
@@ -32,7 +35,10 @@ fn mysql_url_omits_port_when_unset() {
     );
     // No `port` in config → no `:port` in the URL. SQLx will fill in 3306
     // (the MySQL default) when parsing.
-    assert_eq!(any_url("primary", &c).unwrap(), "mysql://u:p@db.example/app");
+    assert_eq!(
+        any_url("primary", &c).unwrap(),
+        "mysql://u:p@db.example/app"
+    );
 }
 
 #[test]

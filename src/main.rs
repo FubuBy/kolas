@@ -1,4 +1,4 @@
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    kolas::bootstrap::app::run().await
+    kolas::bootstrap::console::run().await
 }

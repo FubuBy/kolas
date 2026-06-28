@@ -16,8 +16,9 @@ Bootstrap iteration. Currently included:
 - HTTP: `Route::middleware` / `Route::route_middleware` for the framework `Middleware` trait (application code, e.g. `TrimStrings`), and `Route::layer` for Tower / **tower-http** layers. Sample `TrimStrings` trims JSON, form-urlencoded, and query strings.
 - Default **tower-http** stack is chained on the same `Route` builder: **trace**, permissive **CORS**, **compression** (gzip / brotli / zstd / deflate). Subscriber: `bootstrap::telemetry::Telemetry::init()` from `bootstrap::app::run()`; tune with `RUST_LOG` (see `.env.example`).
 - Relational database layer on top of **SQLx 0.8**: multiple named connections in `config/database.toml`, lazy pool initialization, static `Database` facade with both an `AnyPool` path and typed `Pool<Postgres|MySql|Sqlite>` accessors, optional auto-migrate from `database/migrations/`.
+- Console command layer: `ConsoleKernel` dispatches CLI arguments to `Command` trait implementations; built-in `serve` and `migrate` commands; register your own commands in `src/bootstrap/console.rs`.
 
-Out of scope for now (planned): global error handler, resource routes, CLI commands.
+Out of scope for now (planned): global error handler, resource routes.
 
 ## Requirements
 
@@ -27,7 +28,11 @@ Out of scope for now (planned): global error handler, resource routes, CLI comma
 ## Quick start
 
 ```bash
-cargo run
+cargo run                     # default command → serve (same as before)
+cargo run -- serve            # explicit: start the HTTP server
+cargo run -- migration:migrate # run pending database migrations
+cargo run -- test Alice       # example custom command → Hello, Alice!
+cargo run -- help             # list all registered commands
 # Listening on http://127.0.0.1:3000
 curl http://127.0.0.1:3000/hello
 # {"payload":"Hello world"}
@@ -50,12 +55,15 @@ src/
 ├── lib.rs                                        # Library crate root: declares public modules
 ├── bootstrap/
 │   ├── app.rs                                    # run(): telemetry, config install, HttpServer::run
+│   ├── console.rs                                # run(): bootstrap + ConsoleKernel with registered commands
 │   ├── server.rs                                 # HttpServer — bind + axum::serve from Config
 │   └── telemetry.rs                              # Telemetry::init() — tracing subscriber + RUST_LOG
 ├── framework/                                    # Framework core (future standalone crate)
 │   ├── config/                                   # Configuration loader (TOML + env overrides)
 │   │   ├── config.rs                             # Config struct + static facade
 │   │   └── error.rs                              # Typed loader errors
+│   ├── console/                                  # Console command layer
+│   │   └── command.rs                            # Command trait + BoxFuture type alias; ConsoleKernel in mod.rs
 │   ├── database/                                 # SQLx-based DB layer with named connections
 │   │   ├── config.rs                             # DatabaseConfig, ConnectionConfig, DriverKind
 │   │   ├── error.rs                              # DatabaseError
@@ -68,6 +76,9 @@ src/
 ├── routes/
 │   └── api.rs                                    # API route table — register your routes here
 └── app/
+    ├── console/
+    │   └── commands/
+    │       └── test_command.rs                   # Example custom command (greet [name])
     └── http/
         ├── controllers/
         │   └── hello_world_controller.rs         # Your controllers go in this directory
@@ -646,15 +657,49 @@ No code changes in the framework, no registration step. New connections are pick
 
 ### 7.4. Migrations
 
-SQL files live in `database/migrations/` and are named `<VERSION>_<description>.sql` (e.g. `0001_create_users.sql`). They are processed by `sqlx::migrate::Migrator`.
+SQL files live in `database/migrations/` (configurable via `database.migrations_path`) and are processed by `sqlx::migrate::Migrator`. Each migration is a **reversible pair** named `<VERSION>_<description>.up.sql` / `<VERSION>_<description>.down.sql` (e.g. `0001_create_users.up.sql` + `0001_create_users.down.sql`). The `up` file applies the change; the `down` file reverts it and is required for rollback to work.
 
-You can run them in three ways:
+#### Create a migration
+
+```bash
+cargo run -- migration:create create_users
+# Created ./database/migrations/0001_create_users.up.sql
+# Created ./database/migrations/0001_create_users.down.sql
+```
+
+The version prefix auto-increments from the highest existing migration (zero-padded to four digits). Fill in the generated files:
+
+```sql
+-- 0001_create_users.up.sql
+CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);
+```
+
+```sql
+-- 0001_create_users.down.sql
+DROP TABLE users;
+```
+
+#### Run pending migrations
+
+```bash
+cargo run -- migration:migrate    # apply all pending migrations to the default connection
+```
+
+Equivalent paths from code or at boot:
 
 - **At boot, automatically** — set `auto_migrate = true` in `database.toml` (default is `false`); migrations apply against the default connection right after `Database::install_global()`.
 - **Manually, from code** — `kolas::framework::database::migrate_default("./database/migrations").await?;`
 - **Against a specific connection** — `migrate("analytics", "./database/migrations").await?;`
 
 Repeated runs are idempotent thanks to the `_sqlx_migrations` tracking table.
+
+#### Roll back the last migration
+
+```bash
+cargo run -- migration:rollback   # revert the most recently applied migration
+```
+
+Each invocation reverts exactly one migration (the newest applied one) by running its `down.sql`. Run it again to step back further. If nothing has been applied yet it prints `Nothing to roll back.` and exits successfully. From code: `rollback_default("./database/migrations").await?;` or `rollback("analytics", "./database/migrations").await?;` for a specific connection.
 
 ### 7.5. Lazy initialization
 
@@ -665,6 +710,99 @@ Repeated runs are idempotent thanks to the `_sqlx_migrations` tracking table.
 - For aggressive warm-up, call the relevant accessor in `bootstrap::app::run()` after `install_global()`.
 
 Architecture rationale, full configuration reference and a backlog of future improvements live in `dev_docs/architecture/database.md` and `dev_docs/database/improvements.md`.
+
+## 8. Add a console command
+
+Console commands live in `src/app/console/commands/`. To add a new command, two steps are needed: create the command file and register it in `src/app/console/commands/mod.rs`. Nothing else needs to be touched.
+
+### 8.1. Create the command file
+
+Create `src/app/console/commands/<name>_command.rs`. A command is a unit struct that implements the `Command` trait from `kolas::framework::console`. Arguments arrive parsed as an `Args` value — read positional arguments with `args.positional(i)` (zero-based), named arguments with `args.get("key")`, and boolean flags with `args.has("flag")`.
+
+Example: `src/app/console/commands/report_command.rs`
+
+```rust
+use kolas::framework::console::{Args, BoxFuture, Command};
+
+pub struct ReportCommand;
+
+impl Command for ReportCommand {
+    fn name(&self) -> &str {
+        "report"
+    }
+
+    fn description(&self) -> &str {
+        "Generate a report. Usage: report [period] [user]"
+    }
+
+    fn execute(&self, args: Args) -> BoxFuture<'_> {
+        Box::pin(async move {
+            let period = args.positional(0).unwrap_or("daily");
+            let user   = args.positional(1).unwrap_or("all");
+            println!("Generating {period} report for {user}…");
+            Ok(())
+        })
+    }
+}
+```
+
+Run it:
+
+```bash
+cargo run -- report              # Generating daily report for all…
+cargo run -- report weekly alice # Generating weekly report for alice…
+```
+
+### 8.2. Register the command in `src/app/console/commands/mod.rs`
+
+This is the only file that needs to change. Declare the module, re-export the struct, and add it to the `all()` vector — `bootstrap/console.rs` picks it up automatically from there:
+
+```rust
+pub mod test_command;
+pub mod report_command;          // <-- add
+
+pub use test_command::TestCommand;
+pub use report_command::ReportCommand;   // <-- add
+
+use crate::framework::console::Command;
+
+pub fn all() -> Vec<Box<dyn Command>> {
+    vec![
+        Box::new(TestCommand),
+        Box::new(ReportCommand),  // <-- add
+    ]
+}
+```
+
+### 8.3. Passing arguments
+
+Everything after the command name is parsed into an `Args` value. The kernel recognizes three shapes:
+
+- `--key=value` — named argument, read with `args.get("key") -> Option<&str>` (use the `=` form; there is no space-separated `--key value`)
+- `--flag` — boolean flag, test with `args.has("flag") -> bool`
+- bare tokens — positional arguments (in order), read with `args.positional(i) -> Option<&str>`
+
+```rust
+fn execute(&self, args: Args) -> BoxFuture<'_> {
+    Box::pin(async move {
+        let period = args.positional(0).unwrap_or("daily"); // report weekly
+        let format = args.get("format").unwrap_or("text");  // --format=json
+        let dry_run = args.has("dry-run");                  // --dry-run
+        // ...
+        Ok(())
+    })
+}
+```
+
+### 8.4. Built-in commands
+
+| Command | Invocation | Description |
+|---|---|---|
+| `serve` | `cargo run` or `cargo run -- serve` | Start the HTTP server (default when no command is given) |
+| `migration:create` | `cargo run -- migration:create <name>` | Create a new `up`/`down` migration file pair |
+| `migration:migrate` | `cargo run -- migration:migrate` | Run all pending database migrations |
+| `migration:rollback` | `cargo run -- migration:rollback` | Roll back the last applied migration |
+| `help` | `cargo run -- help` | List all registered commands with descriptions |
 
 ---
 

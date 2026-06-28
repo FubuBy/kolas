@@ -44,7 +44,10 @@ fn parses_full_section() {
     let primary = cfg.connections.get("primary").expect("primary must exist");
     assert_eq!(primary.driver, DriverKind::Mysql);
     assert_eq!(primary.host.as_deref(), Some("127.0.0.1"));
-    assert_eq!(primary.read, vec!["replica1".to_string(), "replica2".to_string()]);
+    assert_eq!(
+        primary.read,
+        vec!["replica1".to_string(), "replica2".to_string()]
+    );
     assert_eq!(primary.pool.max, Some(20));
     assert_eq!(primary.pool.acquire_timeout_ms, Some(7000));
 

@@ -105,10 +105,7 @@ async fn any_pool_for_returns_driver_agnostic_pool() {
 #[tokio::test]
 async fn default_connection_uses_configured_default_name() {
     let db = Database::new(sqlite_memory_config());
-    let conn = db
-        .default_connection()
-        .await
-        .expect("default must resolve");
+    let conn = db.default_connection().await.expect("default must resolve");
     assert_eq!(conn.driver(), "sqlite");
 }
 

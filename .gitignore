@@ -13,4 +13,7 @@
 /target
 /dev_docs
 /.cursor
+/.claude
 .env
+AGENTS.md
+CLAUDE.md

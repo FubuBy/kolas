@@ -1,7 +1,7 @@
 use crate::bootstrap::server::HttpServer;
 use crate::bootstrap::telemetry::Telemetry;
 use crate::framework::config::Config;
-use crate::framework::database::{Database, DEFAULT_MIGRATIONS_PATH, migrate_default};
+use crate::framework::database::{DEFAULT_MIGRATIONS_PATH, Database, migrate_default};
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Telemetry::init();

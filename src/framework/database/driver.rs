@@ -67,10 +67,7 @@ pub fn any_url(name: &str, cfg: &ConnectionConfig) -> Result<String, DatabaseErr
     }
 }
 
-pub fn pg_options(
-    name: &str,
-    cfg: &ConnectionConfig,
-) -> Result<PgConnectOptions, DatabaseError> {
+pub fn pg_options(name: &str, cfg: &ConnectionConfig) -> Result<PgConnectOptions, DatabaseError> {
     if let Some(url) = &cfg.url {
         return PgConnectOptions::from_str(url).map_err(|source| DatabaseError::InvalidUrl {
             name: name.to_string(),
