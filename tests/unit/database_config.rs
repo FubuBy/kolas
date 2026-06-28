@@ -105,3 +105,86 @@ fn read_defaults_to_empty_vec() {
     assert!(primary.read.is_empty());
     assert!(primary.pool == kolas::framework::database::PoolConfig::default());
 }
+
+#[test]
+fn migrations_path_for_prefers_connection_override() {
+    let cfg = parse(
+        r#"
+        migrations_path = "./db/global"
+
+        [connections.pg]
+        driver = "postgres"
+        url = "postgres://localhost/app"
+        migrations_path = "./db/postgres"
+
+        [connections.analytics]
+        driver = "mysql"
+        url = "mysql://localhost/analytics"
+        "#,
+    );
+    // Own override wins.
+    assert_eq!(cfg.migrations_path_for("pg"), "./db/postgres");
+    // No override → global path.
+    assert_eq!(cfg.migrations_path_for("analytics"), "./db/global");
+    // Unknown connection → global path.
+    assert_eq!(cfg.migrations_path_for("missing"), "./db/global");
+}
+
+#[test]
+fn resolve_connection_uses_request_then_default() {
+    let cfg = parse(r#"default = "primary""#);
+    assert_eq!(
+        cfg.resolve_connection(Some("analytics")).unwrap(),
+        "analytics"
+    );
+    assert_eq!(cfg.resolve_connection(None).unwrap(), "primary");
+
+    let no_default = parse("");
+    assert!(no_default.resolve_connection(None).is_err());
+}
+
+#[test]
+fn auto_migrate_targets_covers_default_plus_explicit_paths() {
+    let cfg = parse(
+        r#"
+        default = "pg"
+        migrations_path = "./db/global"
+
+        [connections.pg]
+        driver = "postgres"
+        url = "postgres://localhost/app"
+
+        [connections.analytics]
+        driver = "mysql"
+        url = "mysql://localhost/analytics"
+        migrations_path = "./db/mysql"
+
+        [connections.cache]
+        driver = "sqlite"
+        url = "sqlite::memory:"
+        "#,
+    );
+
+    let targets = cfg.auto_migrate_targets();
+    // Default (pg, via global path) first, then connections with explicit
+    // paths (analytics). `cache` has no path and isn't default → skipped.
+    assert_eq!(
+        targets,
+        vec![
+            ("pg".to_string(), "./db/global".to_string()),
+            ("analytics".to_string(), "./db/mysql".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn auto_migrate_targets_empty_without_default_or_paths() {
+    let cfg = parse(
+        r#"
+        [connections.cache]
+        driver = "sqlite"
+        url = "sqlite::memory:"
+        "#,
+    );
+    assert!(cfg.auto_migrate_targets().is_empty());
+}

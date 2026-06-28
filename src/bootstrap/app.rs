@@ -1,7 +1,7 @@
 use crate::bootstrap::server::HttpServer;
 use crate::bootstrap::telemetry::Telemetry;
 use crate::framework::config::Config;
-use crate::framework::database::{DEFAULT_MIGRATIONS_PATH, Database, migrate_default};
+use crate::framework::database::{Database, migrate};
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Telemetry::init();
@@ -10,11 +10,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Database::install_global()?;
 
     if Config::get::<bool>("database.auto_migrate", false) {
-        let path: String = Config::get(
-            "database.migrations_path",
-            DEFAULT_MIGRATIONS_PATH.to_string(),
-        );
-        migrate_default(&path).await?;
+        for (connection, path) in Database::global().config().auto_migrate_targets() {
+            migrate(&connection, &path).await?;
+        }
     }
 
     HttpServer::run().await

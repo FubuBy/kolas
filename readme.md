@@ -657,49 +657,86 @@ No code changes in the framework, no registration step. New connections are pick
 
 ### 7.4. Migrations
 
-SQL files live in `database/migrations/` (configurable via `database.migrations_path`) and are processed by `sqlx::migrate::Migrator`. Each migration is a **reversible pair** named `<VERSION>_<description>.up.sql` / `<VERSION>_<description>.down.sql` (e.g. `0001_create_users.up.sql` + `0001_create_users.down.sql`). The `up` file applies the change; the `down` file reverts it and is required for rollback to work.
+SQL files live in `database/migrations/` (configurable via `database.migrations_path`) and are processed by `sqlx::migrate::Migrator`. Each migration is a **reversible pair** named `<VERSION>_<description>.up.sql` / `<VERSION>_<description>.down.sql`. The `up` file applies the change; the `down` file reverts it and is required for rollback to work.
+
+The `<VERSION>` is a UTC timestamp down to the millisecond — `YYYYMMDDHHMMSSmmm` (17 digits, e.g. `20260628161504914`). It's a contiguous digit string, so sqlx parses the whole prefix as the migration version and chronological order equals version order. Because it's clock-based rather than a shared counter, two people creating migrations on separate branches won't collide on the same `0001`.
 
 #### Create a migration
 
 ```bash
 cargo run -- migration:create create_users
-# Created ./database/migrations/0001_create_users.up.sql
-# Created ./database/migrations/0001_create_users.down.sql
+# Created ./database/migrations/20260628161504914_create_users.up.sql
+# Created ./database/migrations/20260628161504914_create_users.down.sql
 ```
 
-The version prefix auto-increments from the highest existing migration (zero-padded to four digits). Fill in the generated files:
+Fill in the generated files:
 
 ```sql
--- 0001_create_users.up.sql
+-- 20260628161504914_create_users.up.sql
 CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);
 ```
 
 ```sql
--- 0001_create_users.down.sql
+-- 20260628161504914_create_users.down.sql
 DROP TABLE users;
 ```
 
 #### Run pending migrations
 
 ```bash
-cargo run -- migration:migrate    # apply all pending migrations to the default connection
+cargo run -- migration:migrate                      # against the default connection
+cargo run -- migration:migrate --connection=analytics  # against a named connection
 ```
 
 Equivalent paths from code or at boot:
 
-- **At boot, automatically** — set `auto_migrate = true` in `database.toml` (default is `false`); migrations apply against the default connection right after `Database::install_global()`.
+- **At boot, automatically** — set `auto_migrate = true` in `database.toml` (default is `false`); after `Database::install_global()` the framework migrates the **default** connection plus every connection that declares its own `migrations_path` (see *Multiple databases* below).
 - **Manually, from code** — `kolas::framework::database::migrate_default("./database/migrations").await?;`
-- **Against a specific connection** — `migrate("analytics", "./database/migrations").await?;`
+- **Against a specific connection** — `migrate("analytics", "./database/migrations/mysql").await?;`
 
 Repeated runs are idempotent thanks to the `_sqlx_migrations` tracking table.
 
 #### Roll back the last migration
 
 ```bash
-cargo run -- migration:rollback   # revert the most recently applied migration
+cargo run -- migration:rollback                       # default connection
+cargo run -- migration:rollback --connection=analytics # named connection
 ```
 
-Each invocation reverts exactly one migration (the newest applied one) by running its `down.sql`. Run it again to step back further. If nothing has been applied yet it prints `Nothing to roll back.` and exits successfully. From code: `rollback_default("./database/migrations").await?;` or `rollback("analytics", "./database/migrations").await?;` for a specific connection.
+Each invocation reverts exactly one migration (the newest applied one) by running its `down.sql`. Run it again to step back further. If nothing has been applied yet it prints `Nothing to roll back.` and exits successfully. From code: `rollback_default("./database/migrations").await?;` or `rollback("analytics", "./database/migrations/mysql").await?;` for a specific connection.
+
+#### Multiple databases (Postgres + MySQL + …)
+
+Migration state is tracked **per database** — the `_sqlx_migrations` table lives inside each target DB, so versions never collide across connections. To keep each database's *files* separate (and avoid running Postgres SQL against MySQL), give each connection its own `migrations_path` in `config/database.toml`:
+
+```toml
+default = "pg"
+auto_migrate = true
+migrations_path = "./database/migrations"   # global fallback for connections without their own
+
+[connections.pg]
+driver = "postgres"
+url = "postgres://localhost/app"
+migrations_path = "./database/migrations/postgres"
+
+[connections.analytics]
+driver = "mysql"
+url = "mysql://localhost/analytics"
+migrations_path = "./database/migrations/mysql"
+```
+
+- **Resolution order** for a connection's directory: its own `migrations_path` → the global `migrations_path` → the built-in `./database/migrations`. Connections without an override share the global directory (the single-database default), so existing setups are unchanged.
+- **Targeting** a connection on the CLI: `--connection=<name>` on `migration:create`, `migration:migrate`, and `migration:rollback`. Omitting it uses the configured `default`. (`migration:create` without `--connection` writes to the global directory, since scaffolding files needs no live connection.)
+- **`auto_migrate`** runs the default connection plus every connection that sets its own `migrations_path`; connections that neither are the default nor declare a path are skipped (the framework won't guess which dialect's files belong to them).
+
+```bash
+cargo run -- migration:create create_users --connection=pg
+# Created ./database/migrations/postgres/20260628161504914_create_users.up.sql
+# Created ./database/migrations/postgres/20260628161504914_create_users.down.sql
+
+cargo run -- migration:migrate  --connection=analytics
+cargo run -- migration:rollback --connection=pg
+```
 
 ### 7.5. Lazy initialization
 
@@ -799,9 +836,9 @@ fn execute(&self, args: Args) -> BoxFuture<'_> {
 | Command | Invocation | Description |
 |---|---|---|
 | `serve` | `cargo run` or `cargo run -- serve` | Start the HTTP server (default when no command is given) |
-| `migration:create` | `cargo run -- migration:create <name>` | Create a new `up`/`down` migration file pair |
-| `migration:migrate` | `cargo run -- migration:migrate` | Run all pending database migrations |
-| `migration:rollback` | `cargo run -- migration:rollback` | Roll back the last applied migration |
+| `migration:create` | `cargo run -- migration:create <name> [--connection=<name>]` | Create a new `up`/`down` migration file pair |
+| `migration:migrate` | `cargo run -- migration:migrate [--connection=<name>]` | Run all pending migrations for a connection |
+| `migration:rollback` | `cargo run -- migration:rollback [--connection=<name>]` | Roll back the last applied migration |
 | `help` | `cargo run -- help` | List all registered commands with descriptions |
 
 ---

@@ -20,6 +20,7 @@ fn sqlite_file_config(path: &Path) -> DatabaseConfig {
             username: None,
             password: None,
             read: Vec::new(),
+            migrations_path: None,
             // Single connection avoids contention on a single sqlite file
             // when migrations and follow-up queries run sequentially.
             pool: PoolConfig {

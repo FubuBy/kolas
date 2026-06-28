@@ -17,6 +17,7 @@ fn sqlite_memory_config() -> DatabaseConfig {
             username: None,
             password: None,
             read: Vec::new(),
+            migrations_path: None,
             pool: PoolConfig::default(),
         },
     );

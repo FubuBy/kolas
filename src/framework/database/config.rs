@@ -69,6 +69,12 @@ pub struct ConnectionConfig {
     /// (see `dev_docs/database/improvements.md`, item 6).
     #[serde(default)]
     pub read: Vec<String>,
+    /// Migrations directory for this connection. When set it overrides the
+    /// global `[database] migrations_path`, letting each database (e.g. a
+    /// Postgres primary and a MySQL analytics store) own a separate set of
+    /// migration files with independent versioning.
+    #[serde(default)]
+    pub migrations_path: Option<String>,
     #[serde(default)]
     pub pool: PoolConfig,
 }
@@ -87,11 +93,68 @@ pub struct DatabaseConfig {
 }
 
 impl DatabaseConfig {
-    /// Returns the configured `migrations_path` or the default location.
+    /// Returns the global `migrations_path` or the default location.
     pub fn migrations_path(&self) -> &str {
         self.migrations_path
             .as_deref()
             .unwrap_or(DEFAULT_MIGRATIONS_PATH)
+    }
+
+    /// Resolves the migrations directory for a single connection.
+    ///
+    /// Precedence: the connection's own `migrations_path`, then the global
+    /// `[database] migrations_path`, then the built-in default. Connections
+    /// that don't set their own path share the global directory (the
+    /// single-database default); multi-database setups give each connection
+    /// its own `migrations_path`.
+    pub fn migrations_path_for(&self, name: &str) -> String {
+        self.connections
+            .get(name)
+            .and_then(|c| c.migrations_path.as_deref())
+            .unwrap_or_else(|| self.migrations_path())
+            .to_string()
+    }
+
+    /// Resolves which connection a migration command targets: the explicitly
+    /// requested one, or the configured default when none is given.
+    pub fn resolve_connection(&self, requested: Option<&str>) -> Result<String, DatabaseError> {
+        match requested {
+            Some(name) => Ok(name.to_string()),
+            None => Ok(self.default_name()?.to_string()),
+        }
+    }
+
+    /// Connections to migrate when `auto_migrate` is enabled: the default
+    /// connection (if configured) plus every connection that declares its own
+    /// `migrations_path`. Returns `(connection_name, migrations_path)` pairs,
+    /// de-duplicated by connection name and ordered deterministically (default
+    /// first, then the rest alphabetically).
+    pub fn auto_migrate_targets(&self) -> Vec<(String, String)> {
+        let mut names: Vec<String> = Vec::new();
+        if let Ok(default) = self.default_name() {
+            names.push(default.to_string());
+        }
+
+        let mut extra: Vec<&String> = self
+            .connections
+            .iter()
+            .filter(|(_, c)| c.migrations_path.is_some())
+            .map(|(name, _)| name)
+            .collect();
+        extra.sort();
+        for name in extra {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+
+        names
+            .into_iter()
+            .map(|name| {
+                let path = self.migrations_path_for(&name);
+                (name, path)
+            })
+            .collect()
     }
 
     /// Looks up a connection by name.

@@ -1,5 +1,5 @@
 use crate::framework::console::{Args, BoxFuture, Command};
-use crate::framework::database::{Database, rollback_default};
+use crate::framework::database::{Database, rollback};
 
 pub struct MigrationRollbackCommand;
 
@@ -9,13 +9,15 @@ impl Command for MigrationRollbackCommand {
     }
 
     fn description(&self) -> &str {
-        "Roll back the last applied database migration"
+        "Roll back the last applied migration. Usage: migration:rollback [--connection=<name>]"
     }
 
-    fn execute(&self, _args: Args) -> BoxFuture<'_> {
+    fn execute(&self, args: Args) -> BoxFuture<'_> {
         Box::pin(async move {
-            let path = Database::global().config().migrations_path().to_string();
-            rollback_default(&path).await.map_err(Into::into)
+            let cfg = Database::global().config();
+            let connection = cfg.resolve_connection(args.get("connection"))?;
+            let path = cfg.migrations_path_for(&connection);
+            rollback(&connection, &path).await.map_err(Into::into)
         })
     }
 }

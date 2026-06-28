@@ -10,6 +10,10 @@ database = "kolas"
 username = "root"
 password = ""
 read = []
+# Per-connection migrations override. When set, this connection uses its own
+# migration directory instead of the global `migrations_path` above — useful
+# when you run several databases (e.g. Postgres + MySQL) side by side.
+# migrations_path = "./database/migrations/primary"
 
 [connections.primary.pool]
 max = 10

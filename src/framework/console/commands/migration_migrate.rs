@@ -1,5 +1,5 @@
 use crate::framework::console::{Args, BoxFuture, Command};
-use crate::framework::database::{Database, migrate_default};
+use crate::framework::database::{Database, migrate};
 
 pub struct MigrationMigrateCommand;
 
@@ -9,13 +9,15 @@ impl Command for MigrationMigrateCommand {
     }
 
     fn description(&self) -> &str {
-        "Run all pending database migrations"
+        "Run pending migrations. Usage: migration:migrate [--connection=<name>]"
     }
 
-    fn execute(&self, _args: Args) -> BoxFuture<'_> {
+    fn execute(&self, args: Args) -> BoxFuture<'_> {
         Box::pin(async move {
-            let path = Database::global().config().migrations_path().to_string();
-            migrate_default(&path).await.map_err(Into::into)
+            let cfg = Database::global().config();
+            let connection = cfg.resolve_connection(args.get("connection"))?;
+            let path = cfg.migrations_path_for(&connection);
+            migrate(&connection, &path).await.map_err(Into::into)
         })
     }
 }
