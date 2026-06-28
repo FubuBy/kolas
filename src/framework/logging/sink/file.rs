@@ -21,11 +21,11 @@ use super::super::error::LoggingError;
 ///
 /// # Filtering
 ///
-/// An `EnvFilter` is attached to this layer. The filter directive is built
-/// from the per-sink `level` (and any `exclude_targets` as `prefix=off`
-/// directives). If `RUST_LOG` is set, it is used *instead* of the TOML-derived
-/// directive for this layer only. Database and queue sinks use their own
-/// `level_passes` check and are unaffected by `RUST_LOG`.
+/// An `EnvFilter` is attached to this layer, resolved by
+/// [`super::build_env_filter`] with precedence `RUST_LOG` > `LOG_LEVEL` >
+/// per-sink `level`, plus any `exclude_targets` as `prefix=off` directives.
+/// Database and queue sinks use their own `level_passes` check and are
+/// unaffected by `RUST_LOG` / `LOG_LEVEL`.
 #[allow(clippy::type_complexity)]
 pub fn build_file_layer<S>(
     cfg: &FileSinkConfig,
@@ -49,16 +49,7 @@ where
 
     let (non_blocking, guard) = tracing_appender::non_blocking(appender);
 
-    // Combine level with exclude_targets as `prefix=off` directives.
-    let level_filter: tracing_subscriber::filter::LevelFilter = cfg.level.into();
-    let mut directives = vec![level_filter.to_string()];
-    for prefix in &cfg.exclude_targets {
-        directives.push(format!("{prefix}=off"));
-    }
-    let filter_str = directives.join(",");
-
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(filter_str));
+    let env_filter = super::build_env_filter(cfg.level, &cfg.exclude_targets);
 
     let layer: Box<dyn Layer<S> + Send + Sync> = match cfg.format {
         FormatKind::Json => Box::new(
