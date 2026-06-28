@@ -1,0 +1,19 @@
+default = "primary"
+auto_migrate = false
+migrations_path = "./database/migrations"
+
+[connections.primary]
+driver = "mysql"
+host = "127.0.0.1"
+port = 3306
+database = "kolas"
+username = "root"
+password = ""
+read = []
+
+[connections.primary.pool]
+max = 10
+min = 1
+acquire_timeout_ms = 5000
+idle_timeout_ms = 600000
+max_lifetime_ms = 1800000

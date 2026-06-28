@@ -15,8 +15,9 @@ Bootstrap iteration. Currently included:
 - File-based configuration with environment-variable overrides (`config/*.toml` + `.env`).
 - HTTP: `Route::middleware` / `Route::route_middleware` for the framework `Middleware` trait (application code, e.g. `TrimStrings`), and `Route::layer` for Tower / **tower-http** layers. Sample `TrimStrings` trims JSON, form-urlencoded, and query strings.
 - Default **tower-http** stack is chained on the same `Route` builder: **trace**, permissive **CORS**, **compression** (gzip / brotli / zstd / deflate). Subscriber: `bootstrap::telemetry::Telemetry::init()` from `bootstrap::app::run()`; tune with `RUST_LOG` (see `.env.example`).
+- Relational database layer on top of **SQLx 0.8**: multiple named connections in `config/database.toml`, lazy pool initialization, static `Database` facade with both an `AnyPool` path and typed `Pool<Postgres|MySql|Sqlite>` accessors, optional auto-migrate from `database/migrations/`.
 
-Out of scope for now (planned): global error handler, resource routes, CLI commands, database layer.
+Out of scope for now (planned): global error handler, resource routes, CLI commands.
 
 ## Requirements
 
@@ -55,6 +56,11 @@ src/
 │   ├── config/                                   # Configuration loader (TOML + env overrides)
 │   │   ├── config.rs                             # Config struct + static facade
 │   │   └── error.rs                              # Typed loader errors
+│   ├── database/                                 # SQLx-based DB layer with named connections
+│   │   ├── config.rs                             # DatabaseConfig, ConnectionConfig, DriverKind
+│   │   ├── error.rs                              # DatabaseError
+│   │   ├── manager.rs                            # Database + Connection enum + static facade
+│   │   └── migrate.rs                            # sqlx::Migrator runner
 │   ├── http/
 │   │   └── middleware/                           # Middleware trait + Axum adapters
 │   └── routing/
@@ -70,9 +76,10 @@ src/
 
 config/                                           # Application configuration (TOML files)
 ├── app.toml
-├── database.toml
-├── cache.toml
-└── queue.toml
+└── database.toml
+
+database/                                         # Schema and data files
+└── migrations/                                   # Versioned SQL migrations (sqlx)
 
 .env                                              # Local environment overrides (gitignored)
 .env.example                                      # Committed template for required env vars
@@ -506,6 +513,158 @@ Route::new()
 | Other bodies | e.g. `multipart/*`, `text/plain` | Body is not buffered or modified. |
 
 Internal design notes: `dev_docs/architecture/middleware.md`.
+
+## 7. Work with a relational database
+
+Kolas ships an async database layer built on top of **SQLx 0.8**. It supports multiple **named connections** declared in `config/database.toml`, with lazy pool initialization and a static `Database` facade that mirrors the `Config` one.
+
+Supported drivers: **PostgreSQL**, **MySQL** (and forks: MariaDB, Percona), **SQLite**. MS SQL Server is intentionally not supported — see `dev_docs/database/improvements.md` (item 9) for the path forward if it's ever required.
+
+### 7.1. Configure a connection
+
+Drop entries into `config/database.toml`. The same shape works for all three drivers; pick `driver` accordingly.
+
+```toml
+default = "primary"
+auto_migrate = false
+migrations_path = "./database/migrations"
+
+# MySQL / MariaDB / Percona
+[connections.primary]
+driver = "mysql"
+host = "127.0.0.1"
+port = 3306
+database = "kolas"
+username = "root"
+password = ""
+read = []
+
+[connections.primary.pool]
+max = 10
+min = 1
+acquire_timeout_ms = 5000
+idle_timeout_ms = 600000
+max_lifetime_ms = 1800000
+
+# PostgreSQL — add as many connections as you need
+[connections.analytics]
+driver = "postgres"
+host = "warehouse.internal"
+port = 5432
+database = "events"
+username = "ro"
+password = ""
+
+# SQLite — file-based (use `?mode=rwc` so the file is created on first open)
+[connections.cache]
+driver = "sqlite"
+url = "sqlite://./storage/cache.sqlite?mode=rwc"
+```
+
+For non-standard connection parameters (e.g. Postgres `sslmode=require`) — and, when going through `Database::any(...)`, for passwords containing special characters — set the explicit `url` field instead of `host`/`port`/`username`/`password`. The typed paths (`Database::postgres / mysql / sqlite`) pass credentials directly to SQLx connect options and need no URL-encoding.
+
+You can also omit `port` entirely; SQLx will apply the driver default (5432 / 3306) when opening the connection.
+
+Any value can be overridden by an environment variable using the convention from section 2:
+
+| TOML path | ENV variable |
+|---|---|
+| `database.default` | `DATABASE__DEFAULT` |
+| `database.auto_migrate` | `DATABASE__AUTO_MIGRATE` |
+| `database.connections.primary.host` | `DATABASE__CONNECTIONS__PRIMARY__HOST` |
+| `database.connections.primary.pool.max` | `DATABASE__CONNECTIONS__PRIMARY__POOL__MAX` |
+| `database.connections.cache.url` | `DATABASE__CONNECTIONS__CACHE__URL` |
+
+### 7.2. Get a pool in a controller
+
+Three accessors cover three common needs:
+
+```rust
+use kolas::framework::database::{Connection, Database};
+
+// Universal — sum-type. Pattern-match on the variant when needed.
+let conn = Database::connection("primary").await?;
+match conn {
+    Connection::Postgres(pool) => { /* sqlx::Pool<Postgres> */ }
+    Connection::MySql(pool)    => { /* sqlx::Pool<MySql>    */ }
+    Connection::Sqlite(pool)   => { /* sqlx::Pool<Sqlite>   */ }
+}
+
+// Driver-agnostic — AnyPool. The URL scheme picks the driver at runtime.
+// `query!` / `query_as!` are NOT available with AnyPool.
+let any = Database::any("primary").await?;
+sqlx::query("SELECT 1").execute(&any).await?;
+
+// Typed — required if you want compile-time-checked queries via `query!`.
+let pool = Database::mysql("primary").await?;
+let users = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM users")
+    .fetch_all(&pool)
+    .await?;
+
+// Shortcut for `Database::connection(<the configured default name>)`.
+let conn = Database::default().await?;
+```
+
+A complete controller example:
+
+```rust
+use axum::Json;
+use kolas::framework::database::Database;
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct UserListResponse {
+    pub users: Vec<String>,
+}
+
+pub struct UsersController;
+
+impl UsersController {
+    pub async fn index() -> Result<Json<UserListResponse>, axum::http::StatusCode> {
+        let pool = Database::mysql("primary")
+            .await
+            .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)?;
+
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM users")
+            .fetch_all(&pool)
+            .await
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        Ok(Json(UserListResponse {
+            users: rows.into_iter().map(|(n,)| n).collect(),
+        }))
+    }
+}
+```
+
+### 7.3. Add a new connection
+
+1. Add a `[connections.<name>]` section to `config/database.toml` with the appropriate `driver` and credentials.
+2. Use it from code: `Database::connection("<name>")` (or the typed shortcut for the right driver).
+
+No code changes in the framework, no registration step. New connections are picked up on the next process start.
+
+### 7.4. Migrations
+
+SQL files live in `database/migrations/` and are named `<VERSION>_<description>.sql` (e.g. `0001_create_users.sql`). They are processed by `sqlx::migrate::Migrator`.
+
+You can run them in three ways:
+
+- **At boot, automatically** — set `auto_migrate = true` in `database.toml` (default is `false`); migrations apply against the default connection right after `Database::install_global()`.
+- **Manually, from code** — `kolas::framework::database::migrate_default("./database/migrations").await?;`
+- **Against a specific connection** — `migrate("analytics", "./database/migrations").await?;`
+
+Repeated runs are idempotent thanks to the `_sqlx_migrations` tracking table.
+
+### 7.5. Lazy initialization
+
+`Database::install_global()` does **not** open any sockets. The pool for a given connection name is opened on the **first call** to `Database::connection(name)` / `Database::any(name)` / `Database::<driver>(name)`. As a consequence:
+
+- `cargo run` boots successfully even if the database server is currently down.
+- The first request that actually touches the DB pays the connection-establishment cost.
+- For aggressive warm-up, call the relevant accessor in `bootstrap::app::run()` after `install_global()`.
+
+Architecture rationale, full configuration reference and a backlog of future improvements live in `dev_docs/architecture/database.md` and `dev_docs/database/improvements.md`.
 
 ---
 
