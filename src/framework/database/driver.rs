@@ -85,15 +85,15 @@ pub fn pg_options(name: &str, cfg: &ConnectionConfig) -> Result<PgConnectOptions
     if let Some(port) = cfg.port {
         opts = opts.port(port);
     }
-    if let Some(user) = cfg.username.as_deref() {
-        if !user.is_empty() {
-            opts = opts.username(user);
-        }
+    if let Some(user) = cfg.username.as_deref()
+        && !user.is_empty()
+    {
+        opts = opts.username(user);
     }
-    if let Some(pass) = cfg.password.as_deref() {
-        if !pass.is_empty() {
-            opts = opts.password(pass);
-        }
+    if let Some(pass) = cfg.password.as_deref()
+        && !pass.is_empty()
+    {
+        opts = opts.password(pass);
     }
     Ok(opts)
 }
@@ -119,15 +119,15 @@ pub fn mysql_options(
     if let Some(port) = cfg.port {
         opts = opts.port(port);
     }
-    if let Some(user) = cfg.username.as_deref() {
-        if !user.is_empty() {
-            opts = opts.username(user);
-        }
+    if let Some(user) = cfg.username.as_deref()
+        && !user.is_empty()
+    {
+        opts = opts.username(user);
     }
-    if let Some(pass) = cfg.password.as_deref() {
-        if !pass.is_empty() {
-            opts = opts.password(pass);
-        }
+    if let Some(pass) = cfg.password.as_deref()
+        && !pass.is_empty()
+    {
+        opts = opts.password(pass);
     }
     Ok(opts)
 }

@@ -17,3 +17,6 @@
 .env
 AGENTS.md
 CLAUDE.md
+
+# task artifacts (big-task skill)
+.tasks/

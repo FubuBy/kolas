@@ -1,15 +1,15 @@
 use crate::app::console::commands as app_commands;
 use crate::bootstrap::server::HttpServer;
-use crate::bootstrap::telemetry::Telemetry;
 use crate::framework::config::Config;
 use crate::framework::console::commands as framework_commands;
 use crate::framework::console::{Args, BoxFuture, Command, ConsoleKernel};
 use crate::framework::database::Database;
+use crate::framework::logging::Logging;
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    Telemetry::init();
     Config::load("config")?.install_global();
     Database::install_global()?;
+    let _log_guard = Logging::init()?;
 
     ConsoleKernel::new()
         .register(ServeCommand)

@@ -1,0 +1,49 @@
+# Logging configuration for Kolas.
+# File stem "logging" maps to this config namespace — read via Config::try_get("logging").
+#
+# The default_level is a fallback; each sink can override with its own level.
+default_level = "info"
+
+# Console sink — enabled by default for development.
+[[sinks]]
+type   = "console"
+level  = "debug"
+format = "pretty"   # "pretty" | "json" | "compact"
+target = "stdout"   # "stdout" | "stderr"
+# exclude_targets = ["sqlx"]  # uncomment to silence SQL query logs in production
+
+# File sink — daily rotation, keep 7 files.
+[[sinks]]
+type       = "file"
+level      = "info"
+format     = "json"
+path       = "./storage/logs"
+prefix     = "app"
+rotation   = "daily"   # "hourly" | "daily" | "never"
+keep_files = 7         # delete oldest files beyond this count; omit for unlimited
+# exclude_targets = ["sqlx"]  # uncomment to silence SQL query logs in log files
+
+# Database sink — writes WARN+ events to a dedicated "logs" connection.
+# Requires a [connections.logs] entry in config/database.toml and the log_entries
+# table created from database/migrations/logging/create_log_entries_<driver>.sql.
+# The sqlx.*, kolas::framework::logging.*, and kolas::framework::database.* targets
+# are always excluded (hard-coded) to prevent recursive logging loops.
+#
+# [[sinks]]
+# type              = "database"
+# level             = "warn"
+# connection        = "logs"
+# table             = "log_entries"
+# channel_capacity  = 1024
+# batch_size        = 100
+# flush_interval_ms = 1000
+
+# Queue sink — publishes ERROR events to a message queue.
+# Only "null" driver is available in this iteration (events are discarded).
+# Extend by implementing the QueueDriver trait.
+#
+# [[sinks]]
+# type             = "queue"
+# level            = "error"
+# driver           = "null"
+# channel_capacity = 512
