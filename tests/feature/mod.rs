@@ -3,4 +3,5 @@ mod database_manager;
 mod database_migrate;
 mod hello_world_controller;
 mod logging;
+mod schedule;
 mod trim_strings;

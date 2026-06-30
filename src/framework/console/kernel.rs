@@ -61,6 +61,23 @@ impl ConsoleKernel {
         Err(format!("unknown command: {name}").into())
     }
 
+    /// Dispatches a command by name with the given arguments, bypassing
+    /// `std::env::args()`. Used by the scheduler to run registered commands
+    /// (the console analogue of Laravel's `artisan` schedule).
+    pub async fn dispatch(&self, name: &str, args: Args) -> Result<(), Box<dyn std::error::Error>> {
+        for cmd in &self.commands {
+            if cmd.name() == name {
+                return cmd.execute(args).await;
+            }
+        }
+        Err(format!("unknown command: {name}").into())
+    }
+
+    /// Returns `true` if a command with the given name is registered.
+    pub fn has_command(&self, name: &str) -> bool {
+        self.commands.iter().any(|cmd| cmd.name() == name)
+    }
+
     fn print_help(&self) {
         println!("Available commands:");
         for cmd in &self.commands {

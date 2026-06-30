@@ -1,0 +1,13 @@
+# Scheduler configuration for Kolas.
+# File stem "schedule" maps to this config namespace — read via Config::get("schedule.<key>").
+
+# Default IANA timezone for all scheduled tasks (e.g. "UTC", "Europe/Warsaw").
+# Overridable per-task with `.timezone("...")`.
+timezone = "UTC"
+
+# Log an info event each time a task starts.
+log_runs = true
+
+# Log a warning when a `without_overlapping` task is skipped because the
+# previous run is still in progress.
+log_overlapping = true

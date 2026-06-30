@@ -4,4 +4,5 @@ mod database_options;
 mod database_url;
 mod hello_payload;
 mod logging;
+mod schedule;
 mod trim_strings;
