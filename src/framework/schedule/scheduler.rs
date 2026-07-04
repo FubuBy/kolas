@@ -4,8 +4,7 @@ use std::time::Duration;
 use chrono::Utc;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
-use tracing::{error, info, warn};
-
+use tracing::{debug, error, info, warn};
 use crate::framework::console::ConsoleKernel;
 
 use super::error::{ScheduleError, TaskError};
@@ -122,7 +121,7 @@ impl Scheduler {
             }
 
             if self.log_runs {
-                info!(task = %id, "running scheduled task");
+                debug!(task = %id, "running scheduled task");
             }
 
             let outcome = event.task.execute(Arc::clone(&kernel)).await;
@@ -233,7 +232,7 @@ impl Scheduler {
             }
 
             if self.log_runs {
-                info!(task = %id, "running scheduled task");
+                debug!(task = %id, "running scheduled task");
             }
 
             let future = event.task.execute(Arc::clone(kernel));
