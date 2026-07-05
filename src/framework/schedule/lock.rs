@@ -42,7 +42,9 @@ impl LockStore for InMemoryLockStore {
         let mut locks = self.locks.lock().expect("lock poisoned");
         let now = Instant::now();
 
-        if let Some(&acquired_at) = locks.get(id) && now.duration_since(acquired_at) < ttl {
+        if let Some(&acquired_at) = locks.get(id)
+            && now.duration_since(acquired_at) < ttl
+        {
             return false;
         }
         locks.insert(id.clone(), now);

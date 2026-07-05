@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::framework::console::ConsoleKernel;
 use chrono::Utc;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
-use crate::framework::console::ConsoleKernel;
 
 use super::error::{ScheduleError, TaskError};
 use super::lock::{EventId, InMemoryLockStore, LockStore};

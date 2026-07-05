@@ -40,12 +40,23 @@ where
         source,
     })?;
 
-    // Build the rolling appender for the chosen rotation policy.
-    let appender = match cfg.rotation {
-        RotationKind::Hourly => tracing_appender::rolling::hourly(log_dir, &cfg.prefix),
-        RotationKind::Daily => tracing_appender::rolling::daily(log_dir, &cfg.prefix),
-        RotationKind::Never => tracing_appender::rolling::never(log_dir, &cfg.prefix),
+    // Build the rolling appender for the chosen rotation policy. `filename_suffix`
+    // gives files a `.log` extension regardless of rotation (e.g. `app.2026-07-05.log`,
+    // or just `app.log` for `Never`).
+    let rotation = match cfg.rotation {
+        RotationKind::Hourly => tracing_appender::rolling::Rotation::HOURLY,
+        RotationKind::Daily => tracing_appender::rolling::Rotation::DAILY,
+        RotationKind::Never => tracing_appender::rolling::Rotation::NEVER,
     };
+    let appender = tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(rotation)
+        .filename_prefix(&cfg.prefix)
+        .filename_suffix("log")
+        .build(log_dir)
+        .map_err(|source| LoggingError::FilePathError {
+            path: cfg.path.clone(),
+            source: std::io::Error::other(source),
+        })?;
 
     let (non_blocking, guard) = tracing_appender::non_blocking(appender);
 
