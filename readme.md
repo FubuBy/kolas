@@ -17,6 +17,7 @@ Bootstrap iteration. Currently included:
 - Default **tower-http** stack is chained on the same `Route` builder: **trace**, permissive **CORS**, **compression** (gzip / brotli / zstd / deflate). Subscriber: `framework::logging::Logging::init()`, called from `bootstrap::app::run()` and `bootstrap::console::run()`; declarative sinks (console/file/database/queue) configured in `config/logging.toml`, tune levels with `RUST_LOG` / `LOG_LEVEL` (see `.env.example`).
 - Relational database layer on top of **SQLx 0.8**: multiple named connections in `config/database.toml`, lazy pool initialization, static `Database` facade with both an `AnyPool` path and typed `Pool<Postgres|MySql|Sqlite>` accessors, optional auto-migrate from `database/migrations/`.
 - Console command layer: `ConsoleKernel` dispatches CLI arguments to `Command` trait implementations; built-in `serve` and `migrate` commands; register your own commands in `src/bootstrap/console.rs`.
+- Dependency injection: `framework::di::Container` — register singletons/transients/per-request-scoped services via `ContainerBuilder` (in `src/app/providers/`), resolve with `Container::resolve` or the `Inject<T, Tag>` Axum extractor; `ScopeMiddleware` backs the per-request lifecycle.
 
 Out of scope for now (planned): global error handler, resource routes.
 
@@ -62,6 +63,7 @@ The full task-oriented guide is split by topic in [`documentations/`](documentat
 | [Work with a relational database](documentations/database.md) | SQLx connections, migrations, lazy pools |
 | [Add a console command](documentations/console-commands.md) | `Command` trait, argument parsing, built-in commands |
 | [Routing under the hood](documentations/routing.md) | How `Route` maps onto `axum::Router` |
+| [Dependency injection](documentations/dependency-injection.md) | `Container`, `ContainerBuilder`, `Inject<T, Tag>`, lifecycles, `ScopeMiddleware` |
 
 ## License
 

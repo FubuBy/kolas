@@ -8,6 +8,7 @@ pub mod logger;
 /// Integration tests and downstream crates use this to build individual sink
 /// layers without going through `Logging::init`.
 pub mod sink;
+pub mod subscriber;
 
 pub use config::{
     ConsoleSinkConfig, ConsoleTarget, DatabaseSinkConfig, FileSinkConfig, FormatKind, LevelFilter,
@@ -17,4 +18,5 @@ pub use driver::{NullQueueDriver, QueueDriver};
 pub use error::LoggingError;
 pub use format::LogEntry;
 pub use guard::LoggingGuard;
-pub use logger::Logging;
+pub use logger::{Logger, TracingLogger};
+pub use subscriber::Logging;

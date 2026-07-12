@@ -1,6 +1,17 @@
-use crate::framework::console::{Args, BoxFuture, Command};
+use std::sync::Arc;
 
-pub struct TestCommand;
+use crate::framework::console::{Args, BoxFuture, Command};
+use crate::framework::logging::Logger;
+
+pub struct TestCommand {
+    logger: Arc<dyn Logger>,
+}
+
+impl TestCommand {
+    pub fn new(logger: Arc<dyn Logger>) -> Self {
+        Self { logger }
+    }
+}
 
 impl Command for TestCommand {
     fn name(&self) -> &str {
@@ -14,7 +25,7 @@ impl Command for TestCommand {
     fn execute(&self, args: Args) -> BoxFuture<'_> {
         Box::pin(async move {
             let name = args.positional(0).unwrap_or("World");
-            println!("Hello, {name}!");
+            self.logger.info(&format!("Hello, {name}!"));
             Ok(())
         })
     }

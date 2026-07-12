@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::app;
 use crate::app::console::commands as app_commands;
 use crate::app::console::schedule as app_schedule;
 use crate::bootstrap::server::HttpServer;
@@ -7,6 +8,7 @@ use crate::framework::config::Config;
 use crate::framework::console::commands as framework_commands;
 use crate::framework::console::{Args, BoxFuture, Command, ConsoleKernel};
 use crate::framework::database::Database;
+use crate::framework::di::{Container, ContainerBuilder};
 use crate::framework::logging::Logging;
 use crate::framework::schedule::commands::{ScheduleRunCommand, ScheduleWorkCommand};
 use crate::framework::schedule::{Schedule, Scheduler};
@@ -14,6 +16,8 @@ use crate::framework::schedule::{Schedule, Scheduler};
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Config::load("config")?.install_global();
     Database::install_global()?;
+    let container = app::providers::all(ContainerBuilder::new()).build();
+    Container::install_global(Arc::clone(&container))?;
     let _log_guard = Logging::init()?;
 
     // Build the application schedule. The default timezone comes from config;
@@ -37,7 +41,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dispatch_kernel = Arc::new(
         ConsoleKernel::new()
             .register_all(framework_commands::all())
-            .register_all(app_commands::all()),
+            .register_all(app_commands::all(&container).await?),
     );
 
     // Fail fast on an unknown command name or invalid cron expression.
@@ -56,7 +60,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             Arc::clone(&dispatch_kernel),
         ))
         .register_all(framework_commands::all())
-        .register_all(app_commands::all())
+        .register_all(app_commands::all(&container).await?)
         .default_command("serve")
         .run()
         .await
